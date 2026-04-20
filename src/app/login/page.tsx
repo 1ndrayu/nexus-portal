@@ -35,43 +35,70 @@ export default function LoginPage() {
     return () => unsubscribe();
   }, [router]);
 
+  const isMockConfig = auth.app.options.apiKey === "mock-api-key";
+
+  const handleDemoLogin = () => {
+    // Local demo bypass
+    router.push("/dashboard");
+  };
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
+    if (isMockConfig) {
+      if ((email === "admin@nexus.io" || email === "admin") && (password === "nexus2026" || password === "admin")) {
+        router.push("/dashboard");
+        return;
+      } else {
+        setError("Demo Mode: Use admin / admin");
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       await signInWithEmailAndPassword(auth, email, password);
       router.push("/dashboard");
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("An unexpected error occurred");
+    } catch (err: any) {
+      if (err.code === "auth/api-key-not-valid") {
+        setError("System Configuration Error: Invalid Firebase API Key. Please check your .env file.");
+      } else {
+        setError(err.message || "An unexpected error occurred");
+      }
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
+    if (isMockConfig) {
+      handleDemoLogin();
+      return;
+    }
     setLoading(true);
     setError("");
     try {
       await signInWithPopup(auth, googleProvider);
       router.push("/dashboard");
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Google authentication failed");
+    } catch (err: any) {
+      setError(err.message || "Google authentication failed");
       setLoading(false);
     }
   };
 
   const handleAnonymousLogin = async () => {
+    if (isMockConfig) {
+      handleDemoLogin();
+      return;
+    }
     setLoading(true);
     setError("");
     try {
       await signInAnonymously(auth);
       router.push("/dashboard");
-    } catch (err: unknown) {
-      if (err instanceof Error) setError(err.message);
-      else setError("Anonymous login failed");
+    } catch (err: any) {
+      setError(err.message || "Anonymous login failed");
       setLoading(false);
     }
   };
@@ -88,7 +115,15 @@ export default function LoginPage() {
              <NexusLogo className="h-10 w-10" />
           </div>
           <h1 className="text-4xl font-black text-gray-900 tracking-tighter uppercase">Nexus</h1>
-          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-[0.3em] mt-3 bg-blue-50 px-4 py-1.5 rounded-full">Modular Authentication</p>
+          <div className="flex flex-col items-center space-y-2 mt-3">
+            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-[0.3em] bg-blue-50 px-4 py-1.5 rounded-full">Modular Authentication</p>
+            {isMockConfig && (
+              <div className="flex items-center space-x-2 text-[10px] font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
+                 <AlertCircle size={12} />
+                 <span>DEMO MODE ACTIVE</span>
+              </div>
+            )}
+          </div>
         </header>
 
         <div className="space-y-4">
