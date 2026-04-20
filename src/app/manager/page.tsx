@@ -12,10 +12,10 @@ import { generateHexCode, decryptQRPayload } from "@/lib/logic";
 import { Html5Qrcode } from "html5-qrcode";
 import { 
   X, Camera, User as UserIcon, Plus, 
-  Upload, Search, CheckCircle2, AlertCircle, 
-  ShieldCheck, LayoutDashboard, Settings, 
-  Users, ChevronRight, ArrowLeft, Trash2, Calendar,
-  Edit3, Save, Globe
+  Search, CheckCircle2, AlertCircle, 
+  ShieldCheck, LayoutDashboard, 
+  ChevronRight, ArrowLeft, Trash2,
+  Globe
 } from "lucide-react";
 
 interface Event extends DocumentData {
@@ -59,7 +59,7 @@ export default function ManagerPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   const [isAddingEvent, setIsAddingEvent] = useState(false);
-  const [scanResult, setScanResult] = useState<{ status: 'granted' | 'denied', message: string, data?: any } | null>(null);
+  const [scanResult, setScanResult] = useState<{ status: 'granted' | 'denied', message: string, data?: Record<string, unknown> } | null>(null);
   
   const [newEvent, setNewEvent] = useState({ name: "", description: "", facilities: "WiFi, Catering, VIP Lounge" });
   const [newParticipant, setNewParticipant] = useState({ email: "", name: "" });
@@ -142,7 +142,7 @@ export default function ManagerPage() {
     const querySnapshot = await getDocs(q);
     
     let targetId = "";
-    let existingData: any = null;
+    let existingData: Participant | null = null;
 
     if (!querySnapshot.empty) {
       targetId = querySnapshot.docs[0].id;
@@ -215,7 +215,7 @@ export default function ManagerPage() {
     setScanResult({ 
       status: 'granted', 
       message: 'Identity Verified',
-      data: payload
+      data: payload as unknown as Record<string, unknown>
     });
   };
 
@@ -496,7 +496,7 @@ export default function ManagerPage() {
                           </div>
                           <div>
                             <p className="text-xs font-black text-white uppercase tracking-widest mb-2">Real-Time Sync Active</p>
-                            <p className="text-[10px] text-gray-400 font-medium leading-relaxed max-w-[200px]">All privilege updates are instantly propagated to the participant's identity token.</p>
+                            <p className="text-[10px] text-gray-400 font-medium leading-relaxed max-w-[200px]">All privilege updates are instantly propagated to the participant&apos;s identity token.</p>
                           </div>
                        </div>
                        

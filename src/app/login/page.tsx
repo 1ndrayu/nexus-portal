@@ -10,8 +10,8 @@ import {
   signInAnonymously
 } from "firebase/auth";
 import { 
-  ShieldCheck, Mail, Lock, Globe, ArrowRight, 
-  Shield, Fingerprint, LogIn, ChevronRight, UserCircle,
+  ShieldCheck, Mail, Lock, Globe, 
+  Shield, Fingerprint, LogIn, ChevronRight,
   AlertCircle
 } from "lucide-react";
 
@@ -63,10 +63,11 @@ export default function LoginPage() {
       await signInWithEmailAndPassword(auth, email, password);
       router.push("/dashboard");
     } catch (err: any) {
-      if (err.code === "auth/api-key-not-valid") {
+      const error = err as { code?: string; message?: string };
+      if (error.code === "auth/api-key-not-valid") {
         setError("System Configuration Error: Invalid Firebase API Key. Please check your .env file.");
       } else {
-        setError(err.message || "An unexpected error occurred");
+        setError(error.message || "An unexpected error occurred");
       }
       setLoading(false);
     }
@@ -82,8 +83,9 @@ export default function LoginPage() {
     try {
       await signInWithPopup(auth, googleProvider);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Google authentication failed");
+    } catch (err: unknown) {
+      const error = err as Error;
+      setError(error.message || "Google authentication failed");
       setLoading(false);
     }
   };
@@ -98,8 +100,9 @@ export default function LoginPage() {
     try {
       await signInAnonymously(auth);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Anonymous login failed");
+    } catch (err: unknown) {
+      const error = err as Error;
+      setError(error.message || "Anonymous login failed");
       setLoading(false);
     }
   };

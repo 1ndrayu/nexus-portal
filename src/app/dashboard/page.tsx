@@ -10,11 +10,12 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { QRCodeSVG } from "qrcode.react";
 import { encryptQRPayload, generateHexCode } from "@/lib/logic";
 import { 
-  ShieldCheck, MapPin, Calendar, Clock, 
-  ChevronRight, ArrowRight, User as UserIcon,
-  LogOut, LayoutGrid, Zap, Globe, QrCode,
-  Shield, Info, ChevronLeft, CreditCard
+  ShieldCheck, 
+  ChevronRight, User as UserIcon,
+  LogOut, Zap, Globe, QrCode,
+  Shield, Info, CreditCard
 } from "lucide-react";
+import Image from "next/image";
 
 interface EventData {
   id: string;
@@ -168,7 +169,7 @@ export default function Dashboard() {
            <div className="h-20 w-20 bg-white p-1 rounded-[1.5rem] shadow-xl border border-gray-100 relative group">
               <div className="absolute inset-0 bg-blue-600 rounded-[1.5rem] opacity-0 group-hover:opacity-10 transition-opacity"></div>
               {user?.photoURL ? (
-                <img src={user.photoURL} className="w-full h-full object-cover rounded-[1.4rem]" alt="Profile" />
+                <Image src={user.photoURL} className="w-full h-full object-cover rounded-[1.4rem]" alt="Profile" width={80} height={80} />
               ) : (
                 <div className="w-full h-full bg-blue-50 text-blue-600 flex items-center justify-center rounded-[1.4rem]">
                    <UserIcon size={32} />
