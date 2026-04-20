@@ -3,386 +3,307 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { doc, onSnapshot, DocumentData, getDoc } from "firebase/firestore";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { generateHexCode, encryptQRPayload } from "@/lib/logic";
-import QRCode from "react-qr-code";
 import { 
-  Wifi, Coffee, Mic, Utensils, LayoutDashboard, Settings, 
-  User as UserIcon, ShieldCheck, MapPin, Clock, Calendar, 
-  ChevronRight, Box, CreditCard, Sparkles, AlertCircle
+  collection, query, where, onSnapshot, doc, getDoc, setDoc 
+} from "firebase/firestore";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { QRCodeSVG } from "qrcode.react";
+import { encryptQRPayload, generateHexCode } from "@/lib/logic";
+import { 
+  ShieldCheck, MapPin, Calendar, Clock, 
+  ChevronRight, ArrowRight, User as UserIcon,
+  LogOut, LayoutGrid, Zap, Globe, QrCode,
+  Shield, Info, ChevronLeft, CreditCard
 } from "lucide-react";
 
-const NexusLogo = ({ className = "h-6 w-6" }: { className?: string }) => (
-  <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-    <path d="M25 80V20L75 80V20" stroke="currentColor" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
+interface EventData {
+  id: string;
+  name: string;
+  description: string;
+  managerId: string;
+  managerName: string;
+  config: {
+    facilities: string[];
+  };
+}
 
-export default function DashboardPage() {
+interface Registration {
+  facilities: Record<string, boolean>;
+  status: string;
+}
+
+export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [userData, setUserData] = useState<DocumentData | null>(null);
+  const [registrations, setRegistrations] = useState<Record<string, Registration>>({});
+  const [events, setEvents] = useState<Record<string, EventData>>({});
   const [activeEventId, setActiveEventId] = useState<string | null>(null);
-  const [activeEventData, setActiveEventData] = useState<DocumentData | null>(null);
-  const [activeTab, setActiveTab] = useState("pass");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
-        // In production redirect to login
+        router.push("/login");
+        return;
       }
-    });
-    return () => unsubscribeAuth();
-  }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    const unsubscribeDb = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setUserData(data);
-        // Default to first event if none selected
-        if (!activeEventId && data.registrations) {
-          const firstEventId = Object.keys(data.registrations)[0];
-          if (firstEventId) setActiveEventId(firstEventId);
+      // Check for profile and registrations
+      const userDocRef = doc(db, "users", currentUser.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (!userDoc.exists()) {
+        // Check if there was a pending registration by email
+        const emailDocRef = doc(db, "users", currentUser.email || "unknown");
+        const emailDoc = await getDoc(emailDocRef);
+        
+        if (emailDoc.exists()) {
+          // Migration: Move registration from email-id to uid
+          const pendingData = emailDoc.data();
+          await setDoc(userDocRef, {
+            ...pendingData,
+            name: currentUser.displayName || pendingData.name || "",
+            uid: currentUser.uid
+          });
+          // Optionally delete the email-based doc
+          // await deleteDoc(emailDocRef);
+        } else {
+          // Create new empty profile
+          await setDoc(userDocRef, {
+            email: currentUser.email,
+            name: currentUser.displayName || "",
+            registrations: {},
+            uid: currentUser.uid
+          });
         }
       }
+
+      // Listen for updates
+      const unsubProfile = onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setRegistrations(data.registrations || {});
+          
+          // Fetch event details for each registration
+          const regIds = Object.keys(data.registrations || {});
+          if (regIds.length > 0) {
+            regIds.forEach(async (id) => {
+              if (!events[id]) {
+                const eventSnap = await getDoc(doc(db, "events", id));
+                if (eventSnap.exists()) {
+                  setEvents(prev => ({ ...prev, [id]: { id, ...eventSnap.data() } as EventData }));
+                }
+              }
+            });
+            if (!activeEventId) setActiveEventId(regIds[0]);
+          }
+        }
+        setLoading(false);
+      });
+
+      return () => unsubProfile();
     });
-    return () => unsubscribeDb();
-  }, [user]);
 
-  useEffect(() => {
-    if (!activeEventId) return;
-    const fetchEvent = async () => {
-      const eventSnap = await getDoc(doc(db, "events", activeEventId));
-      if (eventSnap.exists()) {
-        setActiveEventData(eventSnap.data());
-      }
-    };
-    fetchEvent();
-  }, [activeEventId]);
+    return () => unsubscribeAuth();
+  }, [router, activeEventId, events]);
 
-  const activeRegistration = userData?.registrations?.[activeEventId || ""] || null;
-  const hexCode = generateHexCode(user?.uid || "demo-user-123");
+  const handleLogout = async () => {
+    await auth.signOut();
+    router.push("/");
+  };
 
-  const eventList = userData?.registrations ? Object.keys(userData.registrations) : [];
+  const activeEvent = activeEventId ? events[activeEventId] : null;
+  const activeReg = activeEventId ? registrations[activeEventId] : null;
 
-  if (!user) {
+  const qrPayload = (user && activeEvent && activeReg) ? encryptQRPayload({
+    uid: user.uid,
+    eventId: activeEvent.id,
+    eventName: activeEvent.name,
+    managerId: activeEvent.managerId,
+    managerName: activeEvent.managerName,
+    facilities: activeReg.facilities
+  }) : "";
+
+  if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
-        <div className="bg-blue-600 text-white p-4 rounded-xl shadow-md mb-8">
-           <NexusLogo className="h-10 w-10" />
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 space-y-4">
+        <div className="h-16 w-16 bg-blue-600 rounded-[1.5rem] flex items-center justify-center animate-bounce shadow-2xl shadow-blue-100">
+           <Zap className="text-white" size={32} />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Participant Access Required</h1>
-        <p className="text-gray-500 mb-8 max-w-sm">Please sign in to access your event passes and resources.</p>
-        <button onClick={() => router.push("/login")} className="bg-blue-600 text-white font-medium px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors">
-          Go to Login
-        </button>
+        <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.4em] animate-pulse">Syncing Identity...</p>
       </div>
     );
   }
 
+  const regList = Object.keys(registrations);
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row font-sans">
-      {/* Sidebar Navigation */}
-      <div className="w-full md:w-72 lg:w-80 bg-white border-r border-gray-200 p-6 flex flex-col shrink-0 z-10 shadow-sm md:shadow-none">
-        <div className="flex items-center space-x-3 mb-10">
-          <div className="h-10 w-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-100">
-             <NexusLogo />
+    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans pb-20">
+      {/* Dynamic Background */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] right-[-5%] w-[60%] h-[60%] bg-blue-50/50 rounded-full blur-[120px]"></div>
+        <div className="absolute bottom-[-5%] left-[-5%] w-[40%] h-[40%] bg-purple-50/50 rounded-full blur-[100px]"></div>
+      </div>
+
+      <nav className="sticky top-0 z-40 bg-white/70 backdrop-blur-xl border-b border-gray-100 px-6 py-4">
+        <div className="max-w-xl mx-auto flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+             <div className="h-10 w-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-100">
+                <ShieldCheck size={20} />
+             </div>
+             <div>
+                <h1 className="text-sm font-black uppercase tracking-tight leading-none">Nexus</h1>
+                <p className="text-[8px] font-bold text-blue-600 uppercase tracking-widest mt-0.5">Secure Dashboard</p>
+             </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 leading-none tracking-tight">NEXUS</h1>
-            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mt-1">Universal Portal</p>
-          </div>
+          <button onClick={handleLogout} className="p-2.5 bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all">
+             <LogOut size={18} />
+          </button>
         </div>
+      </nav>
 
-        <nav className="flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-2 pb-4 md:pb-0 overflow-x-auto no-scrollbar">
-          <NavButton active={activeTab === 'pass'} onClick={() => setActiveTab('pass')} icon={<CreditCard size={18} />} label="Access Pass" />
-          <NavButton active={activeTab === 'events'} onClick={() => setActiveTab('events')} icon={<Calendar size={18} />} label="My Events" />
-          <NavButton active={activeTab === 'resources'} onClick={() => setActiveTab('resources')} icon={<LayoutDashboard size={18} />} label="Resources" />
-          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={18} />} label="Settings" />
-        </nav>
-
-        <div className="mt-8 hidden md:block">
-           <h2 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4 px-2">Active Environment</h2>
-           <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4">
-              {activeEventData ? (
-                <div>
-                   <p className="font-bold text-gray-900 text-sm truncate">{activeEventData.name}</p>
-                   <p className="text-xs text-blue-600 font-medium mt-1 uppercase tracking-wider">{activeRegistration?.tier || "Attendee"}</p>
-                </div>
+      <main className="relative z-10 max-w-xl mx-auto px-6 py-10 space-y-8">
+        {/* User Header */}
+        <header className="flex items-center space-x-6 animate-in fade-in slide-in-from-top-4 duration-700">
+           <div className="h-20 w-20 bg-white p-1 rounded-[1.5rem] shadow-xl border border-gray-100 relative group">
+              <div className="absolute inset-0 bg-blue-600 rounded-[1.5rem] opacity-0 group-hover:opacity-10 transition-opacity"></div>
+              {user?.photoURL ? (
+                <img src={user.photoURL} className="w-full h-full object-cover rounded-[1.4rem]" alt="Profile" />
               ) : (
-                <p className="text-xs text-gray-400 italic">No event selected</p>
+                <div className="w-full h-full bg-blue-50 text-blue-600 flex items-center justify-center rounded-[1.4rem]">
+                   <UserIcon size={32} />
+                </div>
               )}
+              <div className="absolute -bottom-1 -right-1 h-6 w-6 bg-green-500 border-4 border-white rounded-full"></div>
            </div>
-        </div>
-
-        <div className="mt-auto pt-6 border-t border-gray-100">
-          <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-2xl border border-transparent hover:border-gray-200 transition-all cursor-pointer">
-            <div className="h-10 w-10 rounded-full bg-white flex items-center justify-center text-blue-600 shadow-sm border border-gray-100">
-              <UserIcon size={20} />
-            </div>
-            <div className="overflow-hidden">
-              <p className="font-bold text-sm text-gray-900 truncate">{userData?.name || "Participant"}</p>
-              <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider mt-0.5">{userData?.email || user.email}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 p-6 md:p-10 lg:p-16 overflow-y-auto">
-        <div className="max-w-4xl mx-auto">
-          {activeTab === "pass" && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="mb-10">
-                <h1 className="text-4xl font-bold text-gray-900 mb-2">Your Access Pass</h1>
-                <p className="text-gray-500">Scan this code at checkpoints to verify your identity and entitlements.</p>
+           <div>
+              <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase leading-none">{user?.displayName || "Registry Participant"}</h2>
+              <div className="flex items-center space-x-3 mt-3 text-gray-400">
+                 <span className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-full">{user?.email}</span>
+                 <span className="text-[10px] font-mono font-bold tracking-widest text-blue-600">{generateHexCode(user?.uid || "")}</span>
               </div>
+           </div>
+        </header>
 
-              {activeRegistration ? (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-                  <div className="lg:col-span-2 space-y-8">
-                    <div className="bg-white rounded-[2.5rem] p-12 border border-gray-200 shadow-2xl shadow-gray-200/50 flex flex-col items-center relative overflow-hidden group">
-                      <div className="absolute top-0 left-0 w-full h-2 bg-blue-600" />
-                      
-                      <div className="relative mb-10 p-6 bg-white rounded-3xl border border-gray-100 shadow-sm group-hover:scale-[1.02] transition-transform duration-500">
-                        <QRCode 
-                          value={encryptQRPayload(user.uid, activeRegistration.entitlements, activeEventId!)} 
-                          size={280}
-                          level="H"
-                          fgColor="#0f172a"
-                        />
-                      </div>
-                      
-                      <div className="text-center">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mb-3">Identity Signature</p>
-                        <p className="text-4xl font-mono font-bold text-gray-900 tracking-tighter">{hexCode}</p>
-                        <div className="flex items-center justify-center space-x-2 mt-4 text-green-600 bg-green-50 px-4 py-1.5 rounded-full">
-                           <ShieldCheck size={16} />
-                           <span className="text-xs font-bold uppercase tracking-wider">Live & Authenticated</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm">
-                      <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Environment Access</h3>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        {Object.entries(activeRegistration.entitlements).map(([key, active]) => (
-                          <EntitlementCard key={key} active={active as boolean} label={key} />
-                        ))}
-                      </div>
-                      {Object.keys(activeRegistration.entitlements).length === 0 && (
-                        <p className="text-sm text-gray-400 italic text-center py-4">No entitlements configured for this event.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <div className="bg-gray-900 rounded-[2rem] p-8 text-white shadow-xl relative overflow-hidden">
-                       <Sparkles className="absolute top-4 right-4 text-blue-400 opacity-50" size={32} />
-                       <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">Access Level</p>
-                       <h3 className="text-2xl font-bold mb-4">{activeRegistration.tier}</h3>
-                       <p className="text-sm text-gray-400 leading-relaxed">Your tier grants you specific access zones within the {activeEventData?.name || "event"} area.</p>
-                       <div className="mt-8 flex items-center space-x-3 text-xs font-bold text-white bg-white/10 w-fit px-4 py-2 rounded-full border border-white/10">
-                          <Box size={14} />
-                          <span>NFT TICKET LINKED</span>
-                       </div>
-                    </div>
-
-                    <div className="bg-blue-600 rounded-[2rem] p-8 text-white shadow-xl">
-                       <h3 className="text-lg font-bold mb-2">Instant Sync</h3>
-                       <p className="text-sm text-blue-100 leading-relaxed">Permissions update automatically when modified by event management.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white rounded-[2.5rem] p-16 border border-dashed border-gray-300 flex flex-col items-center text-center">
-                   <div className="h-20 w-20 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mb-6">
-                      <AlertCircle size={40} />
-                   </div>
-                   <h3 className="text-2xl font-bold text-gray-900 mb-2">Environment Not Initialized</h3>
-                   <p className="text-gray-500 max-w-sm mb-8">You are not currently registered for any active events. Check your email or contact management.</p>
-                   <button onClick={() => setActiveTab('events')} className="bg-blue-600 text-white font-bold px-8 py-3 rounded-xl hover:bg-blue-700 transition-all">
-                      Browse My Events
-                   </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "events" && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-               <div className="mb-10">
-                <h1 className="text-4xl font-bold text-gray-900 mb-2">My Event Portfolio</h1>
-                <p className="text-gray-500">Manage your registrations across different modular environments.</p>
+        {regList.length > 0 ? (
+          <>
+            {/* Event Switcher */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                 <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Active Permissions</h3>
+                 <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">{regList.length} Modules Available</span>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {eventList.map(evId => (
-                  <EventSelectorCard 
-                    key={evId}
-                    eventId={evId}
-                    active={activeEventId === evId}
-                    onClick={() => { setActiveEventId(evId); setActiveTab("pass"); }}
-                  />
+              <div className="flex space-x-3 overflow-x-auto pb-4 scrollbar-hide">
+                {regList.map(id => (
+                  <button 
+                    key={id}
+                    onClick={() => setActiveEventId(id)}
+                    className={`shrink-0 px-8 py-4 rounded-[1.5rem] font-bold text-xs uppercase tracking-widest transition-all border ${activeEventId === id ? 'bg-gray-900 text-white border-gray-900 shadow-2xl shadow-gray-200' : 'bg-white text-gray-400 border-gray-100 hover:border-blue-400'}`}
+                  >
+                    {events[id]?.name || "Loading..."}
+                  </button>
                 ))}
-                {eventList.length === 0 && (
-                  <div className="col-span-full py-20 text-center">
-                    <p className="text-gray-400 italic">No registered events found.</p>
-                  </div>
-                )}
               </div>
             </div>
-          )}
 
-          {activeTab === "resources" && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="mb-10">
-                <h1 className="text-4xl font-bold text-gray-900 mb-2">Event Resources</h1>
-                <p className="text-gray-500">Dynamic content pulled from the Nexus Registry.</p>
-              </div>
+            {activeEvent && activeReg && (
+              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-8">
+                {/* QR Access Pass */}
+                <div className="bg-white rounded-[3rem] p-10 border border-gray-100 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.06)] relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
+                  <div className="flex flex-col items-center space-y-8">
+                    <header className="text-center space-y-2">
+                       <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight">{activeEvent.name}</h3>
+                       <div className="flex items-center justify-center space-x-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+                          <Globe size={12} />
+                          <span>Manager: {activeEvent.managerName}</span>
+                       </div>
+                    </header>
+                    
+                    <div className="bg-gray-50 p-8 rounded-[2.5rem] border border-gray-100 relative group-hover:bg-blue-50 transition-colors duration-500">
+                      <div className="absolute -top-4 -left-4 h-12 w-12 border-t-4 border-l-4 border-blue-600 rounded-tl-2xl"></div>
+                      <div className="absolute -bottom-4 -right-4 h-12 w-12 border-b-4 border-r-4 border-blue-600 rounded-br-2xl"></div>
+                      <QRCodeSVG 
+                        value={qrPayload} 
+                        size={200}
+                        level="H"
+                        includeMargin={false}
+                        className="mix-blend-multiply"
+                      />
+                    </div>
 
-              <div className="space-y-6">
-                <div className="bg-white rounded-3xl p-10 border border-gray-100 shadow-sm">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-8">Live Schedule</h2>
-                  <div className="space-y-4">
-                    <ScheduleItem time="10:00 AM" title="Nexus Modular Architecture" location="Main Stage" active />
-                    <ScheduleItem time="11:30 AM" title="Identity Token Cryptography" location="Tech Lab" />
-                    <ScheduleItem time="01:00 PM" title="Networking Buffet" location="VIP Lounge" />
-                    <ScheduleItem time="02:30 PM" title="Closing Keynote" location="Main Stage" />
+                    <div className="text-center">
+                       <div className="px-6 py-2 bg-blue-50 text-blue-700 rounded-full text-[10px] font-black uppercase tracking-[0.3em] inline-block border border-blue-100">
+                          Encrypted Identity Token
+                       </div>
+                       <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest mt-4">Scan at module entry points for verification</p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <ResourceCard title="Spatial Zone Map" icon={<MapPin size={24} />} description="Interactive floor plans and points of interest." />
-                  <ResourceCard title="Identity Vault" icon={<ShieldCheck size={24} />} description="Manage your biometric and crypto credentials." />
+                {/* Facility List */}
+                <div className="bg-white rounded-[3rem] p-10 border border-gray-100 shadow-sm space-y-8">
+                   <div className="flex items-center space-x-3 border-b border-gray-50 pb-6">
+                      <Zap className="text-blue-600" size={20} />
+                      <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-[0.3em]">Granted Facilities</h3>
+                   </div>
+                   <div className="grid grid-cols-1 gap-4">
+                     {activeEvent.config.facilities.map(facility => {
+                       const isAllowed = activeReg.facilities[facility] || false;
+                       return (
+                         <div key={facility} className={`flex items-center justify-between p-6 rounded-2xl border transition-all ${isAllowed ? 'bg-blue-50/30 border-blue-100 shadow-sm' : 'bg-gray-50 border-transparent opacity-40'}`}>
+                           <div className="flex items-center space-x-4">
+                              <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${isAllowed ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                                 {isAllowed ? <ShieldCheck size={16} /> : <Shield size={16} />}
+                              </div>
+                              <span className="font-bold text-sm uppercase tracking-tight">{facility}</span>
+                           </div>
+                           <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-md ${isAllowed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                             {isAllowed ? "Access Granted" : "Restricted"}
+                           </span>
+                         </div>
+                       );
+                     })}
+                   </div>
+                </div>
+
+                {/* Module Info */}
+                <div className="p-8 bg-gray-900 rounded-[2.5rem] text-white flex items-center justify-between group relative overflow-hidden">
+                   <div className="absolute top-[-50%] right-[-10%] w-32 h-32 bg-blue-600/20 rounded-full blur-2xl"></div>
+                   <div className="flex items-center space-x-5">
+                      <div className="h-12 w-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:rotate-12 transition-transform">
+                         <Info size={24} />
+                      </div>
+                      <div>
+                         <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest mb-1">Module ID</p>
+                         <p className="text-xs font-mono font-bold tracking-tighter opacity-80">{activeEvent.id}</p>
+                      </div>
+                   </div>
+                   <ChevronRight className="text-gray-500 group-hover:text-white group-hover:translate-x-1 transition-all" size={20} />
                 </div>
               </div>
-            </div>
-          )}
-
-          {activeTab === "settings" && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="mb-10">
-                <h1 className="text-4xl font-bold text-gray-900 mb-2">Portal Settings</h1>
-                <p className="text-gray-500">Customize your nexus experience and security profile.</p>
-              </div>
-
-              <div className="bg-white rounded-3xl p-10 border border-gray-100 shadow-sm max-w-2xl">
-                <div className="space-y-8">
-                  <SettingRow label="Global Identifier" value={user.uid} mono />
-                  <SettingRow label="Registered Identity" value={userData?.name || "Not set"} />
-                  <SettingRow label="Primary Email" value={user.email || "No email linked"} />
-                  
-                  <div className="pt-10 flex flex-col sm:flex-row gap-4">
-                    <button className="flex-1 bg-blue-600 text-white font-bold py-4 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">Update Profile</button>
-                    <button onClick={async () => { await auth.signOut(); router.push("/"); }} className="flex-1 bg-white border border-gray-200 text-gray-700 font-bold py-4 rounded-2xl hover:bg-gray-50 transition-all">Sign Out</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function NavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
-  return (
-    <button 
-      onClick={onClick}
-      className={`flex items-center space-x-4 px-5 py-4 rounded-2xl font-bold text-sm transition-all whitespace-nowrap ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-50'}`}
-    >
-      <span className={`${active ? 'text-white' : 'text-gray-400'}`}>{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function EntitlementCard({ active, label }: { active: boolean, label: string }) {
-  const Icon = label.toLowerCase().includes('wifi') ? Wifi : 
-               label.toLowerCase().includes('lounge') ? Coffee :
-               label.toLowerCase().includes('stage') || label.toLowerCase().includes('mic') ? Mic :
-               label.toLowerCase().includes('dining') || label.toLowerCase().includes('food') ? Utensils : Box;
-
-  return (
-    <div className={`p-4 rounded-2xl border flex flex-col items-center justify-center text-center transition-all ${active ? 'bg-white border-blue-100 text-gray-900 shadow-sm' : 'bg-gray-50 border-gray-100 text-gray-300 grayscale'}`}>
-      <div className={`h-10 w-10 rounded-xl flex items-center justify-center mb-3 ${active ? 'bg-blue-50 text-blue-600' : 'bg-gray-200 text-gray-400'}`}>
-        <Icon size={20} />
-      </div>
-      <p className="text-[10px] font-bold uppercase tracking-wider truncate w-full px-1">{label}</p>
-    </div>
-  );
-}
-
-function EventSelectorCard({ eventId, active, onClick }: { eventId: string, active: boolean, onClick: () => void }) {
-  const [eventData, setEventData] = useState<DocumentData | null>(null);
-
-  useEffect(() => {
-    const fetch = async () => {
-      const snap = await getDoc(doc(db, "events", eventId));
-      if (snap.exists()) setEventData(snap.data());
-    };
-    fetch();
-  }, [eventId]);
-
-  return (
-    <div 
-      onClick={onClick}
-      className={`p-6 rounded-3xl border-2 transition-all cursor-pointer relative overflow-hidden group ${active ? 'border-blue-600 bg-white shadow-xl shadow-blue-50' : 'border-gray-100 bg-white hover:border-blue-200'}`}
-    >
-      {active && <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl uppercase tracking-widest">Active</div>}
-      <h3 className="font-bold text-gray-900 text-lg mb-2 group-hover:text-blue-600 transition-colors">{eventData?.name || "Loading Event..."}</h3>
-      <p className="text-sm text-gray-500 line-clamp-2 mb-6">{eventData?.description || "..."}</p>
-      <div className="flex items-center text-blue-600 text-xs font-bold uppercase tracking-widest group-hover:translate-x-2 transition-transform">
-         <span>Select Pass</span>
-         <ChevronRight size={14} className="ml-1" />
-      </div>
-    </div>
-  );
-}
-
-function ScheduleItem({ time, title, location, active = false }: { time: string, title: string, location: string, active?: boolean }) {
-  return (
-    <div className={`flex items-center justify-between p-6 rounded-2xl border transition-all ${active ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'}`}>
-      <div className="flex items-center space-x-6">
-        <p className="text-xs font-bold text-blue-600 w-16 uppercase tracking-widest">{time}</p>
-        <div>
-          <p className="font-bold text-gray-900">{title}</p>
-          <div className="flex items-center space-x-2 text-xs text-gray-400 font-medium mt-1">
-            <MapPin size={12} />
-            <span>{location}</span>
+            )}
+          </>
+        ) : (
+          <div className="bg-white rounded-[3rem] border-2 border-dashed border-gray-100 p-20 flex flex-col items-center text-center space-y-6">
+             <div className="h-24 w-24 bg-gray-50 text-gray-200 rounded-[2rem] flex items-center justify-center">
+                <CreditCard size={48} />
+             </div>
+             <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tighter">Zero Permissions Found</h3>
+             <p className="text-gray-400 text-sm font-medium leading-relaxed max-w-xs">Your identity is not currently associated with any active module. Please contact a manager to receive authorization.</p>
+             <button onClick={() => window.location.reload()} className="px-10 py-4 bg-gray-900 text-white rounded-2xl font-bold uppercase tracking-widest text-[10px] hover:bg-blue-600 transition-all shadow-xl shadow-gray-200">
+               Re-Sync Registry
+             </button>
           </div>
-        </div>
-      </div>
-      {active && <span className="bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest animate-pulse">Live Now</span>}
-    </div>
-  );
-}
+        )}
+      </main>
 
-function ResourceCard({ title, icon, description }: { title: string, icon: React.ReactNode, description: string }) {
-  return (
-    <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer group">
-       <div className="h-12 w-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 mb-6 group-hover:scale-110 transition-transform">
-          {icon}
-       </div>
-       <h4 className="font-bold text-gray-900 text-lg mb-2">{title}</h4>
-       <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
-    </div>
-  );
-}
-
-function SettingRow({ label, value, mono = false }: { label: string, value: string, mono?: boolean }) {
-  return (
-    <div className="space-y-2">
-      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]">{label}</label>
-      <div className={`w-full bg-gray-50 px-5 py-4 rounded-2xl border border-gray-100 text-sm text-gray-900 ${mono ? 'font-mono' : 'font-medium'}`}>
-        {value}
-      </div>
+      <footer className="text-center px-10 pb-10">
+         <p className="text-[9px] font-bold text-gray-300 uppercase tracking-[0.4em] leading-relaxed">
+           Nexus Protocol // Real-Time Identity Sync<br/>
+           Authorized Participant Environment
+         </p>
+      </footer>
     </div>
   );
 }

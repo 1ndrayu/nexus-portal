@@ -11,7 +11,8 @@ import {
 } from "firebase/auth";
 import { 
   ShieldCheck, Mail, Lock, Globe, ArrowRight, 
-  Shield, Fingerprint, LogIn, ChevronRight, UserCircle 
+  Shield, Fingerprint, LogIn, ChevronRight, UserCircle,
+  AlertCircle
 } from "lucide-react";
 
 const NexusLogo = ({ className = "h-8 w-8" }: { className?: string }) => (

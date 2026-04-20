@@ -1,4 +1,4 @@
-export type Entitlements = Record<string, boolean>;
+export type Facilities = Record<string, boolean>;
 
 /**
  * Hex-code generation — first 6 chars of UID, uppercased.
@@ -10,10 +10,6 @@ export function generateHexCode(uid: string): string {
 
 /* ────────────────── QR payload (browser-safe) ────────────────── */
 
-/**
- * Build a signed QR payload using the Web Crypto–compatible
- * approach: base-64 encode { uid, entitlements, timestamp, hmac }.
- */
 function simpleHmac(message: string, key: string): string {
   let hash = 0;
   const combined = key + message;
@@ -25,22 +21,34 @@ function simpleHmac(message: string, key: string): string {
   return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
-const SECRET = "nexus-secret-2026";                 // env-inject in prod
+const SECRET = "nexus-secret-2026";
 
-export function encryptQRPayload(
-  uid: string,
-  entitlements: Entitlements,
-  eventId: string = "default"
-): string {
+export interface QRPayload {
+  uid: string;
+  eventId: string;
+  eventName: string;
+  managerId: string;
+  managerName: string;
+  facilities: Facilities;
+  timestamp: number;
+}
+
+export function encryptQRPayload(data: Omit<QRPayload, "timestamp">): string {
   const timestamp = Date.now();
-  const payload = JSON.stringify({ u: uid, e: entitlements, t: timestamp, ev: eventId });
+  const payload = JSON.stringify({ 
+    u: data.uid, 
+    ev: data.eventId, 
+    en: data.eventName,
+    mi: data.managerId,
+    mn: data.managerName,
+    f: data.facilities, 
+    t: timestamp 
+  });
   const sig = simpleHmac(payload, SECRET);
   return btoa(`${payload}|${sig}`);
 }
 
-export function decryptQRPayload(
-  encoded: string,
-): { uid: string; entitlements: Entitlements; timestamp: number; eventId: string } | null {
+export function decryptQRPayload(encoded: string): QRPayload | null {
   try {
     const decoded = atob(encoded);
     const pipeIdx = decoded.lastIndexOf("|");
@@ -64,9 +72,12 @@ export function decryptQRPayload(
 
     return {
       uid: data.u,
-      entitlements: data.e,
+      eventId: data.ev,
+      eventName: data.en,
+      managerId: data.mi,
+      managerName: data.mn,
+      facilities: data.f,
       timestamp: data.t,
-      eventId: data.ev || "default"
     };
   } catch {
     console.error("Failed to decrypt QR payload");
